@@ -35,11 +35,11 @@ dev:
 		gcloud artifacts tags list \
 			--package=default-image \
 			--location=us \
-			--repository=burla-subjob-images/default \
+			--repository=burla-job-environments/default \
 			2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
 	); \
 	IMAGE_NAME=$$( echo \
-		us-docker.pkg.dev/burla-test/burla-subjob-images/default/image-nogpu \
+		us-docker.pkg.dev/burla-test/burla-job-environments/default/image-nogpu \
 	); \
 	echo $${IMAGE_NAME}; \
 	docker run --rm -it \

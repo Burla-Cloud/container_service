@@ -7,12 +7,12 @@ steps:
         gcloud artifacts tags list \
           --package=${_IMAGE_NAME} \
           --location=us \
-          --repository=burla-subjob-images/default \
+          --repository=burla-job-containers/default \
           2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
       );
       IMAGE_TAG=0;
 
-      FULL_IMAGE_NAME_NO_TAG=us-docker.pkg.dev/${PROJECT_ID}/burla-subjob-images/default/${_IMAGE_NAME};
+      FULL_IMAGE_NAME_NO_TAG=us-docker.pkg.dev/${PROJECT_ID}/burla-job-containers/default/${_IMAGE_NAME};
       FULL_IMAGE_NAME_SEQUENTIAL_TAG=${FULL_IMAGE_NAME_NO_TAG}:$((${IMAGE_TAG} + 1));
       FULL_IMAGE_NAME_LATEST_TAG=${FULL_IMAGE_NAME_NO_TAG}:latest;
 
@@ -35,10 +35,10 @@ steps:
 
       elif [ "${_IMAGE_NAME}" == "image-nogpu" ]; then
         DOCKERFILE="Dockerfile";
-        BASE_IMAGE=us-docker.pkg.dev/${PROJECT_ID}/burla-subjob-images/default/base-image-nogpu:latest;
+        BASE_IMAGE=us-docker.pkg.dev/${PROJECT_ID}/burla-job-containers/default/base-image-nogpu:latest;
       elif [ "${_IMAGE_NAME}" == "image-gpu" ]; then
         DOCKERFILE="Dockerfile";
-        BASE_IMAGE=us-docker.pkg.dev/${PROJECT_ID}/burla-subjob-images/default/base-image-gpu:latest;
+        BASE_IMAGE=us-docker.pkg.dev/${PROJECT_ID}/burla-job-containers/default/base-image-gpu:latest;
       fi
 
       FULL_IMAGE_NAME_SEQUENTIAL_TAG=$(cat FULL_IMAGE_NAME_SEQUENTIAL_TAG.txt);

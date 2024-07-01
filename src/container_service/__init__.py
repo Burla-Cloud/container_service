@@ -17,17 +17,13 @@ SELF = {
     "subjob_id": None,
     "subjob_thread": None,
 }
+LOGGER = logging.Client().logger("container_service")
 
 from container_service.endpoints import BP as endpoints_bp
 
 
 app = Flask(__name__)
 app.register_blueprint(endpoints_bp)
-
-
-@app.before_request
-def before_request_func():
-    g.logger = logging.Client().logger("container_service")
 
 
 @app.errorhandler(Exception)
@@ -48,6 +44,6 @@ def log_exception(exception):
         print(traceback_str, file=sys.stderr)
     elif exception:
         log = {"severity": "ERROR", "exception": traceback_str, "request": request_json}
-        g.logger.log_struct(log)
+        LOGGER.log_struct(log)
 
     abort(500)

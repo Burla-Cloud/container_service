@@ -1,8 +1,8 @@
 import os
 
-from flask import jsonify, g, Blueprint
+from flask import jsonify, Blueprint
 
-from container_service import SELF
+from container_service import SELF, LOGGER
 from container_service.udf_executor import execute_job
 from container_service.helpers import ThreadWithExc
 
@@ -34,7 +34,7 @@ def get_status():
 
     if FAILED and not ERROR_ALREADY_LOGGED:
         message = "Subjob Failed" if error else "Subjob died without error!"
-        g.logger.log_struct({"severity": "ERROR", "message": message, "Exception": error})
+        LOGGER.log_struct({"severity": "ERROR", "message": message, "Exception": error})
         ERROR_ALREADY_LOGGED = True
 
     if READY:
