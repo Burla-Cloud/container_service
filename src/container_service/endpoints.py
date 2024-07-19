@@ -1,6 +1,6 @@
 import os
 
-from flask import jsonify, Blueprint
+from flask import jsonify, Blueprint, request
 
 from container_service import SELF, LOGGER
 from container_service.udf_executor import execute_job
@@ -19,6 +19,8 @@ def get_status():
      3. “FAILED”: This service had an internal error and failed to process the subjob.
      4. “DONE”: This container successfully processed the subjob.
     """
+    global ERROR_ALREADY_LOGGED
+
     thread_is_running = SELF["subjob_thread"] and SELF["subjob_thread"].is_alive()
     error = SELF["subjob_thread"].error if SELF["subjob_thread"] else None
     thread_died = SELF["subjob_thread"] and (not SELF["subjob_thread"].is_alive())
@@ -55,7 +57,7 @@ def start_job(job_id: str):
 
     # ThreadWithExc is a thread that catches and stores errors.
     # We need so we can save the error until the status of this service is checked.
-    thread = ThreadWithExc(target=execute_job, args=(job_id,))
+    thread = ThreadWithExc(target=execute_job, args=(job_id, request.files.get("function_pkl")))
     thread.start()
 
     SELF["current_job"] = job_id

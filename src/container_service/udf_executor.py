@@ -3,6 +3,7 @@ import pickle
 import tarfile
 from time import time, sleep
 from pathlib import Path
+from typing import Optional
 
 import cloudpickle
 from tblib import Traceback
@@ -95,22 +96,36 @@ def get_next_subjob(db, job_document_ref):
     return attempt_to_claim_subjob(transaction)
 
 
-def execute_job(job_id: str):
-    gcs_client = StorageClient()
+def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
+    inputs_in_gcs = function_pkl is None
+
     db = firestore.Client()
     job_document_ref = db.collection("jobs").document(job_id)
     job = job_document_ref.get().to_dict()
 
-    pickled_function = Blob.from_string(job["function_uri"], gcs_client).download_as_bytes()
-    user_defined_function = cloudpickle.loads(pickled_function)
+    if inputs_in_gcs:
+        pickled_function_blob = Blob.from_string(job["function_uri"], gcs_client)
+        while not pickled_function_blob.exists():
+            sleep(0.1)
+        pickled_function = pickled_function_blob.download_as_bytes()
+        user_defined_function = cloudpickle.loads(pickled_function)
+    else:
+        user_defined_function = cloudpickle.loads(function_pkl)
 
     if job.get("env", {}).get("is_copied_from_client"):
+        gcs_client = StorageClient()
         _install_copied_environment(gcs_client, job, job_document_ref)
 
     subjob_document_ref = get_next_subjob(db, job_document_ref)
     while subjob_document_ref is not None:
-        input_uri = f"gs://{JOBS_BUCKET}/{job_id}/inputs/{subjob_document_ref.id}.pkl"
-        input_ = cloudpickle.loads(Blob.from_string(input_uri, gcs_client).download_as_bytes())
+        if inputs_in_gcs:
+            input_uri = f"gs://{JOBS_BUCKET}/{job_id}/inputs/{subjob_document_ref.id}.pkl"
+            pickled_input_blob = Blob.from_string(input_uri, gcs_client)
+            while not pickled_input_blob.exists():
+                sleep(0.1)
+            input_ = cloudpickle.loads(pickled_input_blob.download_as_bytes())
+        else:
+            input_ = cloudpickle.loads(subjob_document_ref.get("input_pkl").encode("utf-8"))
 
         udf_error = False
         with _FirestoreLogger(job_document_ref, subjob_document_ref.id):
