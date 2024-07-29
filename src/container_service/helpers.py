@@ -1,4 +1,6 @@
 import threading
+import sys
+import traceback
 
 from google.cloud.secretmanager import SecretManagerServiceClient
 
@@ -15,11 +17,14 @@ def get_secret(secret_name: str):
 class ThreadWithExc(threading.Thread):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.error = None
+        self.traceback_str = None
 
     def run(self):
         try:
             if self._target:
                 self._target(*self._args, **self._kwargs)
         except Exception as e:
-            self.error = e
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            traceback_details = traceback.format_exception(exc_type, exc_value, exc_traceback)
+            traceback_str = "".join(traceback_details)
+            self.traceback_str = traceback_str

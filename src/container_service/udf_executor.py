@@ -98,25 +98,41 @@ def get_next_subjob(db, job_document_ref):
 
 def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
     inputs_in_gcs = function_pkl is None
+    gcs_client = None
 
     db = firestore.Client()
     job_document_ref = db.collection("jobs").document(job_id)
     job = job_document_ref.get().to_dict()
 
     if inputs_in_gcs:
-        pickled_function_blob = Blob.from_string(job["function_uri"], gcs_client)
+        gcs_client = StorageClient() if not gcs_client else gcs_client
+        function_uri = f"gs://{JOBS_BUCKET}/{job_id}/function.pkl"
+        pickled_function_blob = Blob.from_string(function_uri, gcs_client)
+
+        start_time = time()
+        timeout_sec = 10
         while not pickled_function_blob.exists():
+            if time() - start_time > timeout_sec:
+                raise Exception(f"{function_uri} did not appear in under {timeout_sec} sec.")
             sleep(0.1)
+
         pickled_function = pickled_function_blob.download_as_bytes()
         user_defined_function = cloudpickle.loads(pickled_function)
     else:
         user_defined_function = cloudpickle.loads(function_pkl)
 
     if job.get("env", {}).get("is_copied_from_client"):
-        gcs_client = StorageClient()
+        gcs_client = StorageClient() if not gcs_client else gcs_client
         _install_copied_environment(gcs_client, job, job_document_ref)
 
+    timeout_sec = 2
+    start_time = time()
     subjob_document_ref = get_next_subjob(db, job_document_ref)
+    while not subjob_document_ref:
+        subjob_document_ref = get_next_subjob(db, job_document_ref)
+        if time() - start_time > timeout_sec:
+            raise Exception(f"No inputs found in queue after {timeout_sec} sec.")
+
     while subjob_document_ref is not None:
         if inputs_in_gcs:
             input_uri = f"gs://{JOBS_BUCKET}/{job_id}/inputs/{subjob_document_ref.id}.pkl"
@@ -125,7 +141,7 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
                 sleep(0.1)
             input_ = cloudpickle.loads(pickled_input_blob.download_as_bytes())
         else:
-            input_ = cloudpickle.loads(subjob_document_ref.get("input_pkl").encode("utf-8"))
+            input_ = cloudpickle.loads(subjob_document_ref.get().to_dict()["input_pkl"])
 
         udf_error = False
         with _FirestoreLogger(job_document_ref, subjob_document_ref.id):
@@ -137,6 +153,7 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
                 udf_error = True
 
         if not udf_error:
+            gcs_client = StorageClient() if not gcs_client else gcs_client
             return_value_pkl = cloudpickle.dumps(return_value)
             output_uri = f"gs://{JOBS_BUCKET}/{job_id}/outputs/{subjob_document_ref.id}.pkl"
             blob = Blob.from_string(output_uri, gcs_client)

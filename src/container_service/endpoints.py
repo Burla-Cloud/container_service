@@ -1,4 +1,5 @@
 import os
+import sys
 
 from flask import jsonify, Blueprint, request
 
@@ -22,21 +23,23 @@ def get_status():
     global ERROR_ALREADY_LOGGED
 
     thread_is_running = SELF["subjob_thread"] and SELF["subjob_thread"].is_alive()
-    error = SELF["subjob_thread"].error if SELF["subjob_thread"] else None
+    thread_traceback_str = SELF["subjob_thread"].traceback_str if SELF["subjob_thread"] else None
     thread_died = SELF["subjob_thread"] and (not SELF["subjob_thread"].is_alive())
 
     READY = not SELF["STARTED"]
-    RUNNING = thread_is_running and (not error) and (not SELF["DONE"])
-    FAILED = error or (thread_died and not SELF["DONE"])
+    RUNNING = thread_is_running and (not thread_traceback_str) and (not SELF["DONE"])
+    FAILED = thread_traceback_str or (thread_died and not SELF["DONE"])
     DONE = SELF["DONE"]
 
-    # raise error if in development so I dont need to go to google cloud logging to see it
-    if os.environ.get("IN_DEV") and SELF["subjob_thread"] and SELF["subjob_thread"].error:
-        raise SELF["subjob_thread"].error
+    # print error if in development so I dont need to go to google cloud logging to see it
+    if os.environ.get("IN_DEV") and SELF["subjob_thread"] and SELF["subjob_thread"].traceback_str:
+        print(thread_traceback_str, file=sys.stderr)
 
     if FAILED and not ERROR_ALREADY_LOGGED:
-        message = "Subjob Failed" if error else "Subjob died without error!"
-        LOGGER.log_struct({"severity": "ERROR", "message": message, "Exception": error})
+        if thread_traceback_str:
+            LOGGER.log_struct({"severity": "ERROR", "traceback": thread_traceback_str})
+        else:
+            LOGGER.log_struct({"severity": "ERROR", "message": "Subjob thread died without error!"})
         ERROR_ALREADY_LOGGED = True
 
     if READY:
@@ -55,9 +58,13 @@ def start_job(job_id: str):
     if SELF["STARTED"]:  # only one job will ever be executed by this service
         return "STARTED", 409
 
+    function_pkl = request.files.get("function_pkl")
+    if function_pkl:
+        function_pkl = function_pkl.read()
+
     # ThreadWithExc is a thread that catches and stores errors.
     # We need so we can save the error until the status of this service is checked.
-    thread = ThreadWithExc(target=execute_job, args=(job_id, request.files.get("function_pkl")))
+    thread = ThreadWithExc(target=execute_job, args=(job_id, function_pkl))
     thread.start()
 
     SELF["current_job"] = job_id

@@ -1,11 +1,11 @@
 ### How to test the container service
 
-This service has no test suite,
-To test it we run the tests for the node service. If these tests fail, not due to an error in the node service, we can find the container service error in the container logs, or in google cloud logging.
+This service has no test suite, to test it we run the tests for the node service.
+If these tests fail due to an error in the container service, the node service should print the logs from the container that failed. If this doesn't happen for some reason the logs will also be available through `docker logs ...` or google cloud logging.
 
-To modify and update the container service we run `make image_nogpu` or `make image_gpu` to re-bake the code into a new container which will be started by the node service next time we run the tests.
-These containers build quickly because they only add application code to a separate base container that already exists and does not need to be updated.
+To modify the container service we run `make image_nogpu` or `make image_gpu` which will re-bake the code into a new image (takes about 40s to run). The node service will pull the latest image next time the tests are run.
+These images build quickly because they only add application code to a separate base image (`make base_image_nogpu`) that already exists and does not need to be updated.
 
 1. In the node service run `make test`
-2. Observe the container service logs in docker desktop
+2. Observe the container service logs in stderr, `docker logs ...`, or google cloud logging.
 3. Modify and bake new code into a new container buy running `make image_nogpu` or `make image_gpu`
