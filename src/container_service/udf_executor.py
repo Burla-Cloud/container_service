@@ -1,6 +1,7 @@
 import sys
 import pickle
 import tarfile
+import struct
 from time import time, sleep
 from pathlib import Path
 from typing import Optional
@@ -8,24 +9,39 @@ from typing import Optional
 import cloudpickle
 from tblib import Traceback
 from google.cloud import firestore
+from google.cloud import pubsub
 from google.cloud.storage import Client as StorageClient, Blob
+from google.cloud.pubsub_v1.types import BatchSettings
+from google.cloud.firestore_v1 import ArrayUnion
 
-from container_service import JOBS_BUCKET, SELF
+from container_service import (
+    JOBS_BUCKET,
+    SELF,
+    INPUTS_SUBSCRIPTION_PATH,
+    OUTPUTS_TOPIC_PATH,
+    LOGS_TOPIC_PATH,
+)
+
+batch_settings = BatchSettings(max_bytes=10000000, max_latency=0, max_messages=1)
+OUTPUTS_PUBLISHER = pubsub.PublisherClient(batch_settings=batch_settings)
+
+batch_settings = BatchSettings(max_bytes=10000000, max_latency=0.1, max_messages=1000)
+LOGS_PUBLISHER = pubsub.PublisherClient(batch_settings=batch_settings)
+
+INPUTS_SUBSCRIBER = pubsub.SubscriberClient()
 
 
-class _FirestoreLogger:
-    def __init__(self, job_document_ref, subjob_id):
-        self.job_document_ref = job_document_ref
-        self.subjob_id = subjob_id
+class EmptyPubSubTopic(Exception):
+    pass
+
+
+class _PubSubLogger:
 
     def write(self, message):
         if message.strip():
-            log = {
-                "epoch": int(time()),
-                "text": message.strip(),
-                "sub_job_id": self.subjob_id,
-            }
-            self.job_document_ref.collection("logs").add(log)
+            data = message.encode("utf-8")
+            LOGS_PUBLISHER.publish(topic=LOGS_TOPIC_PATH, data=data)
+            # , ordering_key=LOGS_TOPIC_PATH)
         self.original_stdout.write(message)
 
     def flush(self):
@@ -77,34 +93,32 @@ def _serialize_error(exc_info):
     return pickled_exception_info.hex()
 
 
-def get_next_subjob(db, job_document_ref):
-    #
-    @firestore.transactional
-    def attempt_to_claim_subjob(transaction):
-        sub_jobs_ref = job_document_ref.collection("sub_jobs")
-        filter = firestore.FieldFilter("claimed", "==", False)
-        query = sub_jobs_ref.where(filter=filter).limit(1)  # TODO: randomly order before picking
-        docs = list(query.stream())
-        if len(docs) != 0:
-            doc_ref = sub_jobs_ref.document(docs[0].id)
-            snapshot = doc_ref.get(transaction=transaction)
-            if snapshot.exists and not snapshot.get("claimed"):
-                transaction.update(doc_ref, {"claimed": True})
-                return doc_ref
+def get_next_input(pubsub_subscriber: pubsub.SubscriberClient, attempt=0):
+    response = pubsub_subscriber.pull(subscription=INPUTS_SUBSCRIPTION_PATH, max_messages=1)
+    messages = response.received_messages
 
-    transaction = db.transaction(max_attempts=10)
-    return attempt_to_claim_subjob(transaction)
+    if messages:
+        ack_id = messages[0].ack_id
+        pubsub_subscriber.acknowledge(subscription=INPUTS_SUBSCRIPTION_PATH, ack_ids=[ack_id])
+        packed_data = messages[0].message.data
+        input_index = int.from_bytes(packed_data[:4], byteorder="big")
+        return input_index, cloudpickle.loads(packed_data[4:])
+    elif attempt == 3:
+        raise EmptyPubSubTopic("No inputs found in Topic.")
+    else:
+        sleep(0.5)
+        return get_next_input(pubsub_subscriber, attempt=attempt + 1)
 
 
 def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
-    inputs_in_gcs = function_pkl is None
+    function_in_gcs = function_pkl is None
     gcs_client = None
 
     db = firestore.Client()
     job_document_ref = db.collection("jobs").document(job_id)
     job = job_document_ref.get().to_dict()
 
-    if inputs_in_gcs:
+    if function_in_gcs:
         gcs_client = StorageClient() if not gcs_client else gcs_client
         function_uri = f"gs://{JOBS_BUCKET}/{job_id}/function.pkl"
         pickled_function_blob = Blob.from_string(function_uri, gcs_client)
@@ -125,41 +139,23 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
         gcs_client = StorageClient() if not gcs_client else gcs_client
         _install_copied_environment(gcs_client, job, job_document_ref)
 
-    timeout_sec = 2
-    start_time = time()
-    subjob_document_ref = get_next_subjob(db, job_document_ref)
-    while not subjob_document_ref:
-        subjob_document_ref = get_next_subjob(db, job_document_ref)
-        if time() - start_time > timeout_sec:
-            raise Exception(f"No inputs found in queue after {timeout_sec} sec.")
-
-    while subjob_document_ref is not None:
-        if inputs_in_gcs:
-            input_uri = f"gs://{JOBS_BUCKET}/{job_id}/inputs/{subjob_document_ref.id}.pkl"
-            pickled_input_blob = Blob.from_string(input_uri, gcs_client)
-            while not pickled_input_blob.exists():
-                sleep(0.1)
-            input_ = cloudpickle.loads(pickled_input_blob.download_as_bytes())
-        else:
-            input_ = cloudpickle.loads(subjob_document_ref.get().to_dict()["input_pkl"])
+    while True:
+        try:
+            input_index, input_ = get_next_input(INPUTS_SUBSCRIBER)
+        except EmptyPubSubTopic:
+            SELF["DONE"] = True
+            return
 
         udf_error = False
-        with _FirestoreLogger(job_document_ref, subjob_document_ref.id):
-            subjob_document_ref.update({"udf_started": True, "udf_started_at": time()})
+        with _PubSubLogger():
             try:
                 return_value = user_defined_function(input_)
             except Exception:
-                subjob_document_ref.update({"udf_error": _serialize_error(sys.exc_info())})
+                udf_error = _serialize_error(sys.exc_info())
+                udf_error_with_id = {"input_index": input_index, "udf_error": udf_error}
+                job_document_ref.update({"udf_errors": ArrayUnion([udf_error_with_id])})
                 udf_error = True
 
         if not udf_error:
-            gcs_client = StorageClient() if not gcs_client else gcs_client
-            return_value_pkl = cloudpickle.dumps(return_value)
-            output_uri = f"gs://{JOBS_BUCKET}/{job_id}/outputs/{subjob_document_ref.id}.pkl"
-            blob = Blob.from_string(output_uri, gcs_client)
-            blob.upload_from_string(data=return_value_pkl, content_type="application/octet-stream")
-            subjob_document_ref.update({"done": True})
-
-        subjob_document_ref = get_next_subjob(db, job_document_ref)
-
-    SELF["DONE"] = True
+            output_pkl = cloudpickle.dumps(return_value)
+            OUTPUTS_PUBLISHER.publish(topic=OUTPUTS_TOPIC_PATH, data=output_pkl)

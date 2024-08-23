@@ -26,9 +26,7 @@ RUN apt update -y && apt upgrade -y && apt-get update -y && apt-get install -y m
 # Like this, ex: `/.pyenv/versions/3.11.*/bin/python3.11`
 # We tried to add it to $PATH with the docker command: `ENV PATH="/.pyenv/versions/3.9.*/bin:$PATH"`
 # But for an unknown reason this did not work.
-RUN pyenv install 3.8 && \
-    pyenv install 3.9 && \
-    pyenv install 3.10 && \
+RUN pyenv install 3.10 && \
     pyenv install 3.11 && \
     pyenv install 3.12
 
@@ -36,8 +34,6 @@ RUN pyenv install 3.8 && \
 WORKDIR /burla
 ADD ./src /burla/src
 ADD pyproject.toml /burla
-RUN /.pyenv/versions/3.8.*/bin/python3.8 -m pip install -e . && \
-    /.pyenv/versions/3.9.*/bin/python3.9 -m pip install -e . && \
-    /.pyenv/versions/3.10.*/bin/python3.10 -m pip install -e . && \
+RUN /.pyenv/versions/3.10.*/bin/python3.10 -m pip install -e . && \
     /.pyenv/versions/3.11.*/bin/python3.11 -m pip install -e . && \
     /.pyenv/versions/3.12.*/bin/python3.12 -m pip install -e .
