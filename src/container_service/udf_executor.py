@@ -105,12 +105,14 @@ def get_next_input(db: firestore.Client, inputs_id: str):
             snapshot = doc_ref.get(transaction=transaction)
             if snapshot.exists and not snapshot.get("claimed"):
                 transaction.update(doc_ref, {"claimed": True})
-                return docs[0].id, doc_ref.get(["input"]).get("input")
-        else:
-            raise EmptyInputQueue()
+                return docs[0].id, snapshot.get("input")
 
     transaction = db.transaction(max_attempts=10)
-    return attempt_to_claim_subjob(transaction)
+    input_pkl = attempt_to_claim_subjob(transaction)
+    if input_pkl:
+        return input_pkl
+    else:
+        raise EmptyInputQueue()
 
 
 def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
