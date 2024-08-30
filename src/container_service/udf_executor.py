@@ -1,10 +1,10 @@
 import sys
 import pickle
 import tarfile
-import struct
 from time import time, sleep
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 import cloudpickle
 from tblib import Traceback
@@ -31,7 +31,7 @@ LOGS_PUBLISHER = pubsub.PublisherClient(batch_settings=batch_settings)
 INPUTS_SUBSCRIBER = pubsub.SubscriberClient()
 
 
-class EmptyPubSubTopic(Exception):
+class EmptyInputQueue(Exception):
     pass
 
 
@@ -93,21 +93,24 @@ def _serialize_error(exc_info):
     return pickled_exception_info.hex()
 
 
-def get_next_input(pubsub_subscriber: pubsub.SubscriberClient, attempt=0):
-    response = pubsub_subscriber.pull(subscription=INPUTS_SUBSCRIPTION_PATH, max_messages=1)
-    messages = response.received_messages
+def get_next_input(db: firestore.Client, inputs_id: str):
+    @firestore.transactional
+    def attempt_to_claim_subjob(transaction):
+        inputs_ref = db.collection("inputs").document(inputs_id).collection("inputs")
+        filter = firestore.FieldFilter("claimed", "==", False)
+        query = inputs_ref.where(filter=filter).limit(1)  # TODO: randomly order before picking
+        docs = list(query.stream())
+        if len(docs) != 0:
+            doc_ref = inputs_ref.document(docs[0].id)
+            snapshot = doc_ref.get(transaction=transaction)
+            if snapshot.exists and not snapshot.get("claimed"):
+                transaction.update(doc_ref, {"claimed": True})
+                return docs[0].id, doc_ref.get(["input"]).get("input")
+        else:
+            raise EmptyInputQueue()
 
-    if messages:
-        ack_id = messages[0].ack_id
-        pubsub_subscriber.acknowledge(subscription=INPUTS_SUBSCRIPTION_PATH, ack_ids=[ack_id])
-        packed_data = messages[0].message.data
-        input_index = int.from_bytes(packed_data[:4], byteorder="big")
-        return input_index, cloudpickle.loads(packed_data[4:])
-    elif attempt == 3:
-        raise EmptyPubSubTopic("No inputs found in Topic.")
-    else:
-        sleep(0.5)
-        return get_next_input(pubsub_subscriber, attempt=attempt + 1)
+    transaction = db.transaction(max_attempts=10)
+    return attempt_to_claim_subjob(transaction)
 
 
 def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
@@ -115,8 +118,8 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
     gcs_client = None
 
     db = firestore.Client()
-    job_document_ref = db.collection("jobs").document(job_id)
-    job = job_document_ref.get().to_dict()
+    job_ref = db.collection("jobs").document(job_id)
+    job = job_ref.get().to_dict()
 
     if function_in_gcs:
         gcs_client = StorageClient() if not gcs_client else gcs_client
@@ -137,23 +140,24 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
 
     if job.get("env", {}).get("is_copied_from_client"):
         gcs_client = StorageClient() if not gcs_client else gcs_client
-        _install_copied_environment(gcs_client, job, job_document_ref)
+        _install_copied_environment(gcs_client, job, job_ref)
 
     while True:
         try:
-            input_index, input_ = get_next_input(INPUTS_SUBSCRIBER)
-        except EmptyPubSubTopic:
+            input_index, input_pkl = get_next_input(db, job["inputs_id"])
+        except EmptyInputQueue:
             SELF["DONE"] = True
             return
 
         udf_error = False
         with _PubSubLogger():
             try:
+                input_ = cloudpickle.loads(input_pkl)
                 return_value = user_defined_function(input_)
             except Exception:
                 udf_error = _serialize_error(sys.exc_info())
                 udf_error_with_id = {"input_index": input_index, "udf_error": udf_error}
-                job_document_ref.update({"udf_errors": ArrayUnion([udf_error_with_id])})
+                job_ref.update({"udf_errors": ArrayUnion([udf_error_with_id])})
                 udf_error = True
 
         if not udf_error:
