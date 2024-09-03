@@ -25,11 +25,11 @@ steps:
       echo _IMAGE_NAME: ${_IMAGE_NAME}
 
       if [ "${_IMAGE_NAME}" == "base-image-nogpu" ]; then
-        DOCKERFILE="Dockerfile_base";
+        DOCKERFILE="Dockerfile.base";
         BASE_IMAGE="debian:12-slim";
 
       elif [ "${_IMAGE_NAME}" == "base-image-gpu" ]; then
-        DOCKERFILE="Dockerfile_base";
+        DOCKERFILE="Dockerfile.base";
         BASE_IMAGE="tensorflow/tensorflow:2.14.0rc1-gpu";
 
       elif [ "${_IMAGE_NAME}" == "image-nogpu" ]; then
