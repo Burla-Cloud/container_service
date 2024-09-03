@@ -2,9 +2,7 @@
 .ONESHELL:
 .SILENT:
 
-
-test:
-	/.pyenv/versions/3.11.*/bin/python3.11 -m pytest -s --disable-warnings
+ARTIFACT_REPO_NAME = burla-job-containers
 
 base_image_nogpu:
 	set -e; \
@@ -29,23 +27,70 @@ image_gpu:
 		--config cloudbuild.yml \
 		--substitutions _IMAGE_NAME="image-gpu";
 
-dev:
+move-image-nogpu-to-prod:
 	set -e; \
-	IMAGE_TAG=$$( \
+	ARTIFACT_PKG_NAME=$$( echo default/image-nogpu ); \
+	TEST_IMAGE_BASE_NAME=$$( echo \
+		us-docker.pkg.dev/burla-test/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
+	); \
+	PROD_IMAGE_BASE_NAME=$$( echo \
+		us-docker.pkg.dev/burla-prod/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
+	); \
+	TEST_IMAGE_TAG=$$( \
 		gcloud artifacts tags list \
-			--package=default-image \
+			--package=$${ARTIFACT_PKG_NAME} \
 			--location=us \
-			--repository=burla-job-environments/default \
+			--repository=$(ARTIFACT_REPO_NAME) \
+			--project=burla-test \
 			2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
 	); \
-	IMAGE_NAME=$$( echo \
-		us-docker.pkg.dev/burla-test/burla-job-environments/default/image-nogpu \
+	TEST_IMAGE_NAME=$$( echo $${TEST_IMAGE_BASE_NAME}:$${TEST_IMAGE_TAG} ); \
+	PROD_IMAGE_TAG=$$( \
+		gcloud artifacts tags list \
+			--package=$${ARTIFACT_PKG_NAME} \
+			--location=us \
+			--repository=$(ARTIFACT_REPO_NAME) \
+			--project=burla-prod \
+			2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
 	); \
-	echo $${IMAGE_NAME}; \
-	docker run --rm -it \
-		-v $(PWD):/burla \
-		-v ~/.config/gcloud:/root/.config/gcloud \
-		-e GOOGLE_CLOUD_PROJECT=burla-test \
-		-e IN_DEV=True \
-		-p 5001:5000 \
-		$${IMAGE_NAME} bash
+	NEW_PROD_IMAGE_TAG=$$(($${PROD_IMAGE_TAG} + 1)); \
+	PROD_IMAGE_NAME=$$( echo $${PROD_IMAGE_BASE_NAME}:$${NEW_PROD_IMAGE_TAG} ); \
+	docker pull $${TEST_IMAGE_NAME}; \
+	docker tag $${TEST_IMAGE_NAME} $${PROD_IMAGE_NAME}; \
+	docker tag $${PROD_IMAGE_NAME} $${PROD_IMAGE_BASE_NAME}:latest; \
+	docker push $${PROD_IMAGE_NAME}; \
+	docker push $${PROD_IMAGE_BASE_NAME}:latest
+
+move-image-gpu-to-prod:
+	set -e; \
+	ARTIFACT_PKG_NAME=$$( echo default/image-gpu ); \
+	TEST_IMAGE_BASE_NAME=$$( echo \
+		us-docker.pkg.dev/burla-test/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
+	); \
+	PROD_IMAGE_BASE_NAME=$$( echo \
+		us-docker.pkg.dev/burla-prod/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
+	); \
+	TEST_IMAGE_TAG=$$( \
+		gcloud artifacts tags list \
+			--package=$${ARTIFACT_PKG_NAME} \
+			--location=us \
+			--repository=$(ARTIFACT_REPO_NAME) \
+			--project=burla-test \
+			2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
+	); \
+	TEST_IMAGE_NAME=$$( echo $${TEST_IMAGE_BASE_NAME}:$${TEST_IMAGE_TAG} ); \
+	PROD_IMAGE_TAG=$$( \
+		gcloud artifacts tags list \
+			--package=$${ARTIFACT_PKG_NAME} \
+			--location=us \
+			--repository=$(ARTIFACT_REPO_NAME) \
+			--project=burla-prod \
+			2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
+	); \
+	NEW_PROD_IMAGE_TAG=$$(($${PROD_IMAGE_TAG} + 1)); \
+	PROD_IMAGE_NAME=$$( echo $${PROD_IMAGE_BASE_NAME}:$${NEW_PROD_IMAGE_TAG} ); \
+	docker pull $${TEST_IMAGE_NAME}; \
+	docker tag $${TEST_IMAGE_NAME} $${PROD_IMAGE_NAME}; \
+	docker tag $${PROD_IMAGE_NAME} $${PROD_IMAGE_BASE_NAME}:latest; \
+	docker push $${PROD_IMAGE_NAME}; \
+	docker push $${PROD_IMAGE_BASE_NAME}:latest

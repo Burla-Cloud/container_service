@@ -5,12 +5,11 @@ steps:
 
       IMAGE_TAG=$( \
         gcloud artifacts tags list \
-          --package=${_IMAGE_NAME} \
+          --package=default/${_IMAGE_NAME} \
           --location=us \
-          --repository=burla-job-containers/default \
+          --repository=burla-job-containers \
           2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
       );
-      IMAGE_TAG=0;
 
       FULL_IMAGE_NAME_NO_TAG=us-docker.pkg.dev/${PROJECT_ID}/burla-job-containers/default/${_IMAGE_NAME};
       FULL_IMAGE_NAME_SEQUENTIAL_TAG=${FULL_IMAGE_NAME_NO_TAG}:$((${IMAGE_TAG} + 1));
@@ -26,11 +25,11 @@ steps:
       echo _IMAGE_NAME: ${_IMAGE_NAME}
 
       if [ "${_IMAGE_NAME}" == "base-image-nogpu" ]; then
-        DOCKERFILE="Dockerfile_base";
+        DOCKERFILE="Dockerfile.base";
         BASE_IMAGE="debian:12-slim";
 
       elif [ "${_IMAGE_NAME}" == "base-image-gpu" ]; then
-        DOCKERFILE="Dockerfile_base";
+        DOCKERFILE="Dockerfile.base";
         BASE_IMAGE="tensorflow/tensorflow:2.14.0rc1-gpu";
 
       elif [ "${_IMAGE_NAME}" == "image-nogpu" ]; then
