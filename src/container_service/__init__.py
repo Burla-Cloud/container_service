@@ -3,7 +3,7 @@ import sys
 import json
 import traceback
 
-from flask import Flask, g, request, abort
+from flask import Flask, request, abort
 from google.cloud import logging
 
 # Defined before importing endpoints to prevent cyclic imports
