@@ -10,7 +10,6 @@ from google.cloud import logging
 IN_PRODUCTION = os.environ.get("IN_PRODUCTION") == "True"
 PROJECT_ID = "burla-prod" if IN_PRODUCTION else os.environ.get("BURLA_TEST_PROJECT")
 JOBS_BUCKET = "burla-jobs-prod" if IN_PRODUCTION else os.environ.get("BURLA_TEST_JOBS_BUCKET")
-INPUTS_SUBSCRIPTION_PATH = f"projects/{PROJECT_ID}/subscriptions/burla_job_inputs"
 OUTPUTS_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/burla_job_outputs"
 LOGS_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/burla_job_logs"
 
