@@ -7,9 +7,9 @@ from flask import Flask, request, abort
 from google.cloud import logging
 
 # Defined before importing endpoints to prevent cyclic imports
-IN_PRODUCTION = os.environ.get("IN_PRODUCTION") == "True"
-PROJECT_ID = "burla-prod" if IN_PRODUCTION else os.environ.get("BURLA_TEST_PROJECT")
-JOBS_BUCKET = "burla-jobs-prod" if IN_PRODUCTION else os.environ.get("BURLA_TEST_JOBS_BUCKET")
+IN_DEV = os.environ.get("IN_DEV") == "True"
+PROJECT_ID = os.environ.get("PROJECT_ID")
+JOBS_BUCKET = f"burla-jobs--{PROJECT_ID}"
 OUTPUTS_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/burla_job_outputs"
 LOGS_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/burla_job_logs"
 
@@ -43,7 +43,7 @@ def log_exception(exception):
     except:
         request_json = "Unable to serialize request."
 
-    if exception and os.environ.get("IN_DEV"):
+    if exception and IN_DEV:
         print(traceback_str, file=sys.stderr)
     elif exception:
         log = {"severity": "ERROR", "exception": traceback_str, "request": request_json}
