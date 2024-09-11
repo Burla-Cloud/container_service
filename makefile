@@ -3,6 +3,7 @@
 .SILENT:
 
 ARTIFACT_REPO_NAME = burla-job-containers
+PROJECT_ID := $(shell gcloud config get-value project)
 
 base_image_nogpu:
 	set -e; \
@@ -31,7 +32,7 @@ move-image-nogpu-to-prod:
 	set -e; \
 	ARTIFACT_PKG_NAME=$$( echo default/image-nogpu ); \
 	TEST_IMAGE_BASE_NAME=$$( echo \
-		us-docker.pkg.dev/$(BURLA_TEST_PROJECT)/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
+		us-docker.pkg.dev/$(PROJECT_ID)/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
 	); \
 	PROD_IMAGE_BASE_NAME=$$( echo \
 		us-docker.pkg.dev/burla-prod/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
@@ -41,7 +42,7 @@ move-image-nogpu-to-prod:
 			--package=$${ARTIFACT_PKG_NAME} \
 			--location=us \
 			--repository=$(ARTIFACT_REPO_NAME) \
-			--project=$(BURLA_TEST_PROJECT) \
+			--project=$(PROJECT_ID) \
 			2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
 	); \
 	TEST_IMAGE_NAME=$$( echo $${TEST_IMAGE_BASE_NAME}:$${TEST_IMAGE_TAG} ); \
@@ -65,7 +66,7 @@ move-image-gpu-to-prod:
 	set -e; \
 	ARTIFACT_PKG_NAME=$$( echo default/image-gpu ); \
 	TEST_IMAGE_BASE_NAME=$$( echo \
-		us-docker.pkg.dev/$(BURLA_TEST_PROJECT)/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
+		us-docker.pkg.dev/$(PROJECT_ID)/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
 	); \
 	PROD_IMAGE_BASE_NAME=$$( echo \
 		us-docker.pkg.dev/burla-prod/$(ARTIFACT_REPO_NAME)/$${ARTIFACT_PKG_NAME} \
@@ -75,7 +76,7 @@ move-image-gpu-to-prod:
 			--package=$${ARTIFACT_PKG_NAME} \
 			--location=us \
 			--repository=$(ARTIFACT_REPO_NAME) \
-			--project=$(BURLA_TEST_PROJECT) \
+			--project=$(PROJECT_ID) \
 			2>&1 | grep -Eo '^[0-9]+' | sort -n | tail -n 1 \
 	); \
 	TEST_IMAGE_NAME=$$( echo $${TEST_IMAGE_BASE_NAME}:$${TEST_IMAGE_TAG} ); \
