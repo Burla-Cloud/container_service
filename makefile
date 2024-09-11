@@ -3,7 +3,7 @@
 .SILENT:
 
 ARTIFACT_REPO_NAME = burla-job-containers
-PROJECT_ID := $(shell gcloud config get-value project)
+PROJECT_ID := $(shell gcloud config get-value project 2>/dev/null)
 
 base_image_nogpu:
 	set -e; \
