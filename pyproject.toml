@@ -16,7 +16,6 @@ cloudpickle = "^2.2.1"
 tblib = "^3.0.0"
 google-cloud-logging = "^3.8.0"
 google-cloud-secret-manager = "^2.16.4"
-google-cloud-pubsub = "^2.23.0"
 
 [build-system]
 requires = ["poetry-core"]
