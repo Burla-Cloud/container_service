@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "container_service"
-version = "0.1.2-alpha"
+version = "0.8.2"
 description = ""
 authors = ["Jacob Zuliani <jake@burla.dev>"]
 packages = [{include = "container_service", from = "src"}]

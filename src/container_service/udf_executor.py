@@ -4,45 +4,34 @@ import tarfile
 from time import time, sleep
 from pathlib import Path
 from typing import Optional
-from uuid import uuid4
 
 import cloudpickle
 from tblib import Traceback
 from google.cloud import firestore
-from google.cloud import pubsub
 from google.cloud.storage import Client as StorageClient, Blob
-from google.cloud.pubsub_v1.types import BatchSettings
-from google.cloud.firestore_v1 import ArrayUnion
+from google.cloud.firestore_v1 import ArrayUnion, CollectionReference
 
-from container_service import (
-    JOBS_BUCKET,
-    SELF,
-    INPUTS_SUBSCRIPTION_PATH,
-    OUTPUTS_TOPIC_PATH,
-    LOGS_TOPIC_PATH,
-)
-
-batch_settings = BatchSettings(max_bytes=10000000, max_latency=0, max_messages=1)
-OUTPUTS_PUBLISHER = pubsub.PublisherClient(batch_settings=batch_settings)
-
-batch_settings = BatchSettings(max_bytes=10000000, max_latency=0.1, max_messages=1000)
-LOGS_PUBLISHER = pubsub.PublisherClient(batch_settings=batch_settings)
-
-INPUTS_SUBSCRIBER = pubsub.SubscriberClient()
+from container_service import JOBS_BUCKET, SELF
 
 
 class EmptyInputQueue(Exception):
     pass
 
 
-class _PubSubLogger:
+class _FirestoreLogger:
 
-    def write(self, message):
-        if message.strip():
-            data = message.encode("utf-8")
-            LOGS_PUBLISHER.publish(topic=LOGS_TOPIC_PATH, data=data)
-            # , ordering_key=LOGS_TOPIC_PATH)
-        self.original_stdout.write(message)
+    def __init__(self, logs_collection_ref: CollectionReference, input_index: int):
+        self.logs_collection_ref = logs_collection_ref
+        self.input_index = input_index
+
+    def write(self, msg):
+        self.original_stdout.write(msg)
+        if msg.strip() and (len(msg.encode("utf-8")) > 1_048_376):  # (1mb - est overhead):
+            msg_truncated = msg.encode("utf-8")[:1_048_376].decode("utf-8", errors="ignore")
+            msg = msg_truncated + "<too-long--remaining-msg-truncated-due-to-length>"
+        if msg.strip():
+            log = {"ts": time(), "input_index": self.input_index, "msg": msg}
+            self.logs_collection_ref.add(log)
 
     def flush(self):
         self.original_stdout.flush()
@@ -121,6 +110,8 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
 
     db = firestore.Client()
     job_ref = db.collection("jobs").document(job_id)
+    outputs_collection_ref = job_ref.collection("outputs")
+    logs_collection_ref = job_ref.collection("logs")
     job = job_ref.get().to_dict()
 
     if function_in_gcs:
@@ -152,7 +143,7 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
             return
 
         udf_error = False
-        with _PubSubLogger():
+        with _FirestoreLogger(logs_collection_ref, input_index):
             try:
                 input_ = cloudpickle.loads(input_pkl)
                 return_value = user_defined_function(input_)
@@ -164,4 +155,10 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
 
         if not udf_error:
             output_pkl = cloudpickle.dumps(return_value)
-            OUTPUTS_PUBLISHER.publish(topic=OUTPUTS_TOPIC_PATH, data=output_pkl)
+            output_too_big = len(output_pkl) > 1_048_376
+            if output_too_big:
+                msg = f"Input at index {input_index} is greater than 1MB in size.\n"
+                msg += "Inputs greater than 1MB are unfortunately not yet supported."
+                raise Exception(msg)
+            else:
+                outputs_collection_ref.document(str(input_index)).set({"output": output_pkl})
