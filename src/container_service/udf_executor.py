@@ -17,7 +17,6 @@ from google.cloud.firestore_v1 import ArrayUnion
 from container_service import (
     JOBS_BUCKET,
     SELF,
-    INPUTS_SUBSCRIPTION_PATH,
     OUTPUTS_TOPIC_PATH,
     LOGS_TOPIC_PATH,
 )

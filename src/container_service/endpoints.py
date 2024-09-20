@@ -3,7 +3,7 @@ import sys
 
 from flask import jsonify, Blueprint, request
 
-from container_service import SELF, LOGGER
+from container_service import SELF, LOGGER, IN_DEV
 from container_service.udf_executor import execute_job
 from container_service.helpers import ThreadWithExc
 
@@ -32,7 +32,7 @@ def get_status():
     DONE = SELF["DONE"]
 
     # print error if in development so I dont need to go to google cloud logging to see it
-    if os.environ.get("IN_DEV") and SELF["subjob_thread"] and SELF["subjob_thread"].traceback_str:
+    if IN_DEV and SELF["subjob_thread"] and SELF["subjob_thread"].traceback_str:
         print(thread_traceback_str, file=sys.stderr)
 
     if FAILED and not ERROR_ALREADY_LOGGED:
