@@ -1,4 +1,3 @@
-import os
 import sys
 
 from flask import jsonify, Blueprint, request
@@ -58,13 +57,14 @@ def start_job(job_id: str):
     if SELF["STARTED"]:  # only one job will ever be executed by this service
         return "STARTED", 409
 
+    starting_index = int.from_bytes(request.files["starting_index"].read())
     function_pkl = request.files.get("function_pkl")
     if function_pkl:
         function_pkl = function_pkl.read()
 
     # ThreadWithExc is a thread that catches and stores errors.
     # We need so we can save the error until the status of this service is checked.
-    thread = ThreadWithExc(target=execute_job, args=(job_id, function_pkl))
+    thread = ThreadWithExc(target=execute_job, args=(job_id, starting_index, function_pkl))
     thread.start()
 
     SELF["current_job"] = job_id

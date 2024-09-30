@@ -3,19 +3,98 @@ import pickle
 import tarfile
 from time import time, sleep
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import cloudpickle
 from tblib import Traceback
 from google.cloud import firestore
+from google.cloud.firestore import FieldFilter
 from google.cloud.storage import Client as StorageClient, Blob
 from google.cloud.firestore_v1 import ArrayUnion, CollectionReference
 
 from container_service import JOBS_BUCKET, SELF
 
+from google.cloud import logging
+
 
 class EmptyInputQueue(Exception):
     pass
+
+
+class InputGetter:
+    """
+    The policy implemented here is designed to minimize firestore document collisions.
+    If too many workers try to grab a firestore document (input) at the same time, stuff breaks.
+    """
+
+    def __init__(
+        self,
+        db: firestore.Client,
+        inputs_id: str,
+        num_inputs: int,
+        starting_index: int,
+        current_parallelism: int,
+    ):
+        self.db = db
+        self.inputs_id = inputs_id
+        self.num_inputs = num_inputs
+        self.current_parallelism = current_parallelism
+        self.starting_index = starting_index
+
+        self.current_index = starting_index
+        self.getting_first_input = True
+
+        inputs_parent_doc = self.db.collection("inputs").document(self.inputs_id)
+        self.inputs_collection_ref = inputs_parent_doc.collection("inputs")
+
+        self.logger = logging.Client().logger(f"WORKER_index_{starting_index}")
+
+    def __empty_input_queue(self):
+        filter = FieldFilter("claimed", "==", False)
+        unclaimed_inputs_query = self.inputs_collection_ref.where(filter=filter)
+        n_unclaimed_inputs = unclaimed_inputs_query.count().get()[0][0].value
+        return n_unclaimed_inputs == 0
+
+    def __attempt_to_claim_input(self, input_index: int) -> Union[None, bytes]:
+        @firestore.transactional
+        def attempt_to_claim_input(transaction: firestore.Transaction, input_index: int):
+            document_reference = self.inputs_collection_ref.document(str(input_index))
+            document_snapshot = document_reference.get(transaction=transaction)
+            if document_snapshot.exists and not document_snapshot.get("claimed"):
+                transaction.update(document_reference, {"claimed": True})
+                return document_snapshot.get("input")
+
+        try:
+            transaction = self.db.transaction(max_attempts=1)
+            return attempt_to_claim_input(transaction, input_index)
+        except ValueError as e:
+            if "Failed to commit transaction" in str(e):
+                raise ValueError(f"DOCUMENT CONTENTION AT INDEX: {input_index}")
+            else:
+                raise e
+
+    def get_next_input(self):
+        # avoid checking self.__empty_input_queue() on first input to reduce latency.
+        if self.getting_first_input:
+            self.getting_first_input = False
+        elif self.__empty_input_queue():
+            raise EmptyInputQueue()
+
+        struct = dict(
+            message=f"Attempting to claim input at index: {self.current_index}",
+            current_index=self.current_index,
+            current_parallelism=self.current_parallelism,
+            num_inputs=self.num_inputs,
+        )
+        self.logger.log_struct(struct)
+
+        input_pkl = self.__attempt_to_claim_input(self.current_index)
+        self.current_index = (self.current_index + self.current_parallelism) % self.num_inputs
+
+        if input_pkl:
+            return self.current_index, input_pkl
+        else:
+            return self.get_next_input()
 
 
 class _FirestoreLogger:
@@ -74,43 +153,21 @@ def _serialize_error(exc_info):
     exception_type, exception, traceback = exc_info
     pickled_exception_info = pickle.dumps(
         dict(
-            exception_type=exception_type,
+            type=exception_type,
             exception=exception,
             traceback_dict=Traceback(traceback).to_dict(),
         )
     )
-    return pickled_exception_info.hex()
+    return pickled_exception_info
 
 
-def get_next_input(db: firestore.Client, inputs_id: str):
-    @firestore.transactional
-    def attempt_to_claim_subjob(transaction):
-        inputs_ref = db.collection("inputs").document(inputs_id).collection("inputs")
-        filter = firestore.FieldFilter("claimed", "==", False)
-        query = inputs_ref.where(filter=filter).limit(1)  # TODO: randomly order before picking
-        docs = list(query.stream())
-        if len(docs) != 0:
-            doc_ref = inputs_ref.document(docs[0].id)
-            snapshot = doc_ref.get(transaction=transaction)
-            if snapshot.exists and not snapshot.get("claimed"):
-                transaction.update(doc_ref, {"claimed": True})
-                return docs[0].id, snapshot.get("input")
-
-    transaction = db.transaction(max_attempts=10)
-    input_pkl = attempt_to_claim_subjob(transaction)
-    if input_pkl:
-        return input_pkl
-    else:
-        raise EmptyInputQueue()
-
-
-def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
+def execute_job(job_id: str, starting_index: int, function_pkl: Optional[bytes] = None):
     function_in_gcs = function_pkl is None
     gcs_client = None
 
     db = firestore.Client()
     job_ref = db.collection("jobs").document(job_id)
-    outputs_collection_ref = job_ref.collection("outputs")
+    results_collection_ref = job_ref.collection("results")
     logs_collection_ref = job_ref.collection("logs")
     job = job_ref.get().to_dict()
 
@@ -135,30 +192,36 @@ def execute_job(job_id: str, function_pkl: Optional[bytes] = None):
         gcs_client = StorageClient() if not gcs_client else gcs_client
         _install_copied_environment(gcs_client, job, job_ref)
 
+    input_getter = InputGetter(
+        db,
+        inputs_id=job["inputs_id"],
+        num_inputs=job["n_inputs"],
+        starting_index=starting_index,
+        current_parallelism=job["planned_future_job_parallelism"],
+    )
+
     while True:
         try:
-            input_index, input_pkl = get_next_input(db, job["inputs_id"])
+            input_index, input_pkl = input_getter.get_next_input()
         except EmptyInputQueue:
             SELF["DONE"] = True
             return
 
-        udf_error = False
+        exec_info = None
         with _FirestoreLogger(logs_collection_ref, input_index):
             try:
                 input_ = cloudpickle.loads(input_pkl)
                 return_value = user_defined_function(input_)
             except Exception:
-                udf_error = _serialize_error(sys.exc_info())
-                udf_error_with_id = {"input_index": input_index, "udf_error": udf_error}
-                job_ref.update({"udf_errors": ArrayUnion([udf_error_with_id])})
-                udf_error = True
+                exec_info = sys.exc_info()
 
-        if not udf_error:
-            output_pkl = cloudpickle.dumps(return_value)
-            output_too_big = len(output_pkl) > 1_048_376
-            if output_too_big:
-                msg = f"Input at index {input_index} is greater than 1MB in size.\n"
-                msg += "Inputs greater than 1MB are unfortunately not yet supported."
-                raise Exception(msg)
-            else:
-                outputs_collection_ref.document(str(input_index)).set({"output": output_pkl})
+        result_pkl = _serialize_error(exec_info) if exec_info else cloudpickle.dumps(return_value)
+        result_too_big = len(result_pkl) > 1_048_376
+
+        if result_too_big:
+            noun = "Error" if exec_info else "Return value"
+            msg = f"{noun} from input at index {input_index} is greater than 1MB in size."
+            raise Exception(f"{msg}\nUnable to store result.")
+
+        result_doc = {"is_error": bool(exec_info), "result_pkl": result_pkl}
+        results_collection_ref.document(str(input_index)).set(result_doc)

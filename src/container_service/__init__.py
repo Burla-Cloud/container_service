@@ -10,8 +10,6 @@ from google.cloud import logging
 IN_DEV = os.environ.get("IN_DEV") == "True"
 PROJECT_ID = os.environ.get("PROJECT_ID")
 JOBS_BUCKET = f"burla-jobs--{PROJECT_ID}"
-OUTPUTS_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/burla_job_outputs"
-LOGS_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/burla_job_logs"
 
 SELF = {
     "STARTED": False,
