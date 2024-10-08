@@ -15,13 +15,14 @@ SELF = {
     "STARTED": False,
     "DONE": False,
     "job_id": None,
-    "subjob_id": None,
     "subjob_thread": None,
+    "WORKER_LOGS": [],
+    "started_at": None,
+    "starting_index": None,
 }
 LOGGER = logging.Client().logger("container_service")
 
 from container_service.endpoints import BP as endpoints_bp
-
 
 app = Flask(__name__)
 app.register_blueprint(endpoints_bp)
