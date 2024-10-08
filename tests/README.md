@@ -7,5 +7,8 @@ To modify the container service we run `make image_nogpu` or `make image_gpu` wh
 These images build quickly because they only add application code to a separate base image (`make base_image_nogpu`) that already exists and does not need to be updated.
 
 1. In the node service run `make test`
-2. Observe the container service logs in stderr, `docker logs ...`, or google cloud logging.
-3. Modify and bake new code into a new container buy running `make image_nogpu` or `make image_gpu`
+2. Observe the container service logs in stderr or `docker logs ...`.
+3. Fix errors,
+    (you do NOT need to make a new container every iteration,
+    code is mounted into existing container when `IN_DEV`)
+3. Once passing, bake code into a new container buy running `make image_nogpu` or `make image_gpu`
