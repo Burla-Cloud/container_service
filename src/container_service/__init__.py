@@ -10,20 +10,19 @@ from google.cloud import logging
 IN_DEV = os.environ.get("IN_DEV") == "True"
 PROJECT_ID = os.environ.get("PROJECT_ID")
 JOBS_BUCKET = f"burla-jobs--{PROJECT_ID}"
-OUTPUTS_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/burla_job_outputs"
-LOGS_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/burla_job_logs"
 
 SELF = {
     "STARTED": False,
     "DONE": False,
     "job_id": None,
-    "subjob_id": None,
     "subjob_thread": None,
+    "WORKER_LOGS": [],
+    "started_at": None,
+    "starting_index": None,
 }
 LOGGER = logging.Client().logger("container_service")
 
 from container_service.endpoints import BP as endpoints_bp
-
 
 app = Flask(__name__)
 app.register_blueprint(endpoints_bp)
