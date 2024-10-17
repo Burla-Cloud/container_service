@@ -48,7 +48,7 @@ class InputGetter:
         # grab doc
         input_pkl = None
         input_doc_url = f"{DB_BASE_URL}/inputs/{self.inputs_id}/{collection_name}/{input_index}"
-        for i in range(10):
+        for i in range(15):
             response = requests.get(input_doc_url, headers=self.db_headers)
             if response.status_code == 200:
                 input_pkl = base64.b64decode(response.json()["fields"]["input"]["bytesValue"])
