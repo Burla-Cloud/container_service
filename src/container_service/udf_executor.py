@@ -2,7 +2,7 @@ import sys
 import base64
 import pickle
 import requests
-from time import time, sleep
+from time import sleep
 from typing import Union
 
 import cloudpickle
@@ -48,7 +48,7 @@ class InputGetter:
         # grab doc
         input_pkl = None
         input_doc_url = f"{DB_BASE_URL}/inputs/{self.inputs_id}/{collection_name}/{input_index}"
-        for _ in range(10):
+        for i in range(15):
             response = requests.get(input_doc_url, headers=self.db_headers)
             if response.status_code == 200:
                 input_pkl = base64.b64decode(response.json()["fields"]["input"]["bytesValue"])
@@ -56,7 +56,7 @@ class InputGetter:
                 break
             if response.status_code != 404:
                 raise Exception(f"non 404/200 response trying to get input {input_index}?")
-            sleep(0.1)
+            sleep(i * i * 0.1)  # 0.0, 0.1, 0.4, 0.9, 1.6, 2.5, 3.6, 4.9, 6.4, 8.1 ...
 
         if not input_pkl:
             raise Exception(f"DOCUMENT #{input_index} NOT FOUND after 10 attempts.")
